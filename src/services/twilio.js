@@ -116,9 +116,22 @@ export function validateSignature(req) {
   if (!config.twilio.validateSignature) return true;
   if (!config.twilio.authToken) return false;
   const signature = req.header('X-Twilio-Signature') || '';
-  const base = config.publicUrl || `${req.protocol}://${req.get('host')}`;
-  const url = `${base}${req.originalUrl}`;
-  return Twilio.validateRequest(config.twilio.authToken, signature, url, req.body || {});
+  if (!signature) return false;
+
+  // Twilio signs the exact URL it called. Behind a proxy or a platform rewrite the
+  // request may not reproduce that verbatim, so accept a match on either the host
+  // the request arrived on or the configured public URL.
+  const candidates = new Set();
+  const host = req.get('x-forwarded-host') || req.get('host');
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'https';
+  if (host) candidates.add(`${proto}://${host}${req.originalUrl}`);
+  if (config.publicUrl) candidates.add(`${config.publicUrl}${req.originalUrl}`);
+
+  for (const url of candidates) {
+    if (Twilio.validateRequest(config.twilio.authToken, signature, url, req.body || {})) return true;
+  }
+  log('error', 'webhook', 'Twilio signature did not match', { tried: [...candidates] });
+  return false;
 }
 
 /** Quick credential check used by the Settings screen. */

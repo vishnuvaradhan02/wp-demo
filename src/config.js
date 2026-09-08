@@ -46,7 +46,10 @@ azure.configured = real(azure.endpoint) && real(azure.apiKey) && Boolean(azure.d
 // On Vercel the filesystem is read-only apart from /tmp, and VERCEL_URL gives
 // us the deployment host so the webhook URL is correct without extra config.
 const isServerless = Boolean(process.env.VERCEL);
-const vercelUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '';
+// VERCEL_URL is the per-deployment host and changes on every push, so prefer the
+// stable production domain; PUBLIC_URL still wins for a custom domain.
+const vercelHost = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || '';
+const vercelUrl = vercelHost ? `https://${vercelHost}` : '';
 const publicUrl = (process.env.PUBLIC_URL || vercelUrl || '').replace(/\/+$/, '');
 const writableDir = isServerless ? '/tmp' : path.join(ROOT, 'data');
 
