@@ -1,0 +1,20 @@
+{
+  "name": "wa-comms-platform",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "WhatsApp communications management platform — Twilio + Azure OpenAI",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "pg": "^8.23.0",
+    "twilio": "^5.4.0"
+  }
+}
