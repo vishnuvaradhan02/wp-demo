@@ -184,7 +184,7 @@ src/
   services/ai.js       Azure OpenAI calls, system prompt, knowledge file
   services/messaging.js send+record, auto-reply orchestration
   services/events.js   SSE hub
-public/                dashboard (vanilla JS, no build step)
+web/                   dashboard (vanilla JS, no build step)
 context/company.md     the knowledge base the AI answers from
 tunnel.sh              cloudflared quick tunnel for local webhook testing
 ```

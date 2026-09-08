@@ -30,7 +30,9 @@ export function createApp() {
   app.get('/healthz', (_req, res) => res.json({ ok: true, uptime: process.uptime() }));
   app.use('/webhook', webhookRoutes);
   app.use('/api', dashboardAuth, apiRoutes);
-  app.use(dashboardAuth, express.static(path.join(config.root, 'public'), { extensions: ['html'] }));
+  // The dashboard lives in web/, not public/: Vercel serves a root public/ folder
+  // straight from its CDN, which skips dashboardAuth and breaks the "/" rewrite.
+  app.use(dashboardAuth, express.static(path.join(config.root, 'web'), { extensions: ['html'] }));
 
   app.use((err, _req, res, _next) => {
     log('error', 'http', err.message, err.stack?.split('\n').slice(0, 3).join(' | '));
