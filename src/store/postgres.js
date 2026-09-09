@@ -20,7 +20,6 @@ export function createPostgresStore({ connectionString }) {
   const q = async (sql, params = []) => (await pool.query(sql, params)).rows;
   const one = async (sql, params = []) => normalizeRow((await pool.query(sql, params)).rows[0] || null);
   const many = async (sql, params = []) => normalizeRows((await pool.query(sql, params)).rows);
-  const count = async (sql) => Number((await pool.query(sql)).rows[0]?.c ?? 0);
 
   return {
     kind: 'postgres',
@@ -216,22 +215,33 @@ CREATE TABLE IF NOT EXISTS logs (
 
     /* stats */
     async stats() {
-      return {
-        conversations: await count('SELECT COUNT(*) c FROM conversations'),
-        messagesIn: await count("SELECT COUNT(*) c FROM messages WHERE direction = 'in'"),
-        messagesOut: await count("SELECT COUNT(*) c FROM messages WHERE direction = 'out'"),
-        aiReplies: await count("SELECT COUNT(*) c FROM messages WHERE source = 'ai'"),
-        needsHuman: await count('SELECT COUNT(*) c FROM conversations WHERE needs_human = 1'),
-        unread: await count('SELECT COUNT(*) c FROM conversations WHERE unread > 0'),
-        failed: await count("SELECT COUNT(*) c FROM messages WHERE status = 'failed'"),
-        last7days: (await q(
+      // Two round-trips instead of eight: one aggregate row, one per-day series.
+      const [totals, days] = await Promise.all([
+        q(`SELECT
+             (SELECT COUNT(*) FROM conversations)                          AS conversations,
+             (SELECT COUNT(*) FROM messages WHERE direction = 'in')        AS messages_in,
+             (SELECT COUNT(*) FROM messages WHERE direction = 'out')       AS messages_out,
+             (SELECT COUNT(*) FROM messages WHERE source = 'ai')           AS ai_replies,
+             (SELECT COUNT(*) FROM conversations WHERE needs_human = 1)    AS needs_human,
+             (SELECT COUNT(*) FROM conversations WHERE unread > 0)         AS unread,
+             (SELECT COUNT(*) FROM messages WHERE status = 'failed')       AS failed`),
+        q(
           `SELECT to_char(created_at::date, 'YYYY-MM-DD') d,
                   COUNT(*) FILTER (WHERE direction = 'in')  AS inbound,
                   COUNT(*) FILTER (WHERE direction = 'out') AS outbound
              FROM messages WHERE created_at >= NOW() - INTERVAL '7 days'
-            GROUP BY 1 ORDER BY 1`)).map((r) => ({
-              d: r.d, inbound: Number(r.inbound), outbound: Number(r.outbound),
-            })),
+            GROUP BY 1 ORDER BY 1`),
+      ]);
+      const t = totals[0] || {};
+      return {
+        conversations: Number(t.conversations || 0),
+        messagesIn: Number(t.messages_in || 0),
+        messagesOut: Number(t.messages_out || 0),
+        aiReplies: Number(t.ai_replies || 0),
+        needsHuman: Number(t.needs_human || 0),
+        unread: Number(t.unread || 0),
+        failed: Number(t.failed || 0),
+        last7days: days.map((r) => ({ d: r.d, inbound: Number(r.inbound), outbound: Number(r.outbound) })),
       };
     },
   };

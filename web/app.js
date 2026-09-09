@@ -3,6 +3,22 @@
 /* ── helpers ──────────────────────────────────────────────── */
 const $ = (sel, root = document) => root.querySelector(sel);
 const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
+const mobileQuery = window.matchMedia('(max-width: 760px)');
+const isMobile = () => mobileQuery.matches;
+/** On phones the inbox is two screens: 'list' or 'chat'. Desktop shows both. */
+/** Phone tabs use the short label in data-m; desktop keeps the full one. */
+function applyNavLabels() {
+  for (const span of document.querySelectorAll('.nav-item span[data-m]')) {
+    span.dataset.full ??= span.textContent;
+    span.textContent = isMobile() ? span.dataset.m : span.dataset.full;
+  }
+}
+function setInboxScreen(screen) {
+  const inbox = $('.inbox');
+  if (!inbox) return;
+  inbox.classList.toggle('show-list', screen === 'list');
+  inbox.classList.toggle('show-chat', screen === 'chat');
+}
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 async function api(path, options = {}) {
@@ -77,6 +93,7 @@ function renderStatusPills() {
   $('#pill-dry').title = 'Twilio calls are simulated — no real messages are sent';
   const on = s.settings.auto_reply_enabled === 'true';
   $('#auto-toggle').checked = on;
+  $('#auto-toggle-m').checked = on;
   $('#auto-sub').textContent = on ? 'AI answers everyone' : 'Manual replies only';
 }
 
@@ -211,6 +228,14 @@ views.inbox = async (host) => {
 
   await refreshConversations();
   renderConvList();
+  if (isMobile()) {
+    // Phones land on the list; a tapped thread opens as its own screen.
+    setInboxScreen('list');
+    if (state.activeId) {
+      try { renderChat((await api(`/conversations/${state.activeId}`)).conversation); } catch {}
+    }
+    return;
+  }
   const first = state.activeId || state.conversations[0]?.id;
   if (first) openConversation(first); else renderChatEmpty();
 };
@@ -252,6 +277,7 @@ async function openConversation(id) {
   await refreshConversations();
   renderConvList();
   renderChat(conversation);
+  setInboxScreen('chat');
 }
 
 function bubble(m) {
@@ -276,14 +302,17 @@ function renderChat(conv) {
   const chat = $('#chat');
   chat.innerHTML = `
     <div class="chat-head">
+      <button class="btn btn-ghost back-btn only-mobile" id="chat-back" aria-label="Back to conversations">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
       <div class="avatar">${esc(initials(conv))}</div>
-      <div style="min-width:0">
+      <div class="chat-who">
         <div class="who">${esc(conv.name || conv.phone)}</div>
         <div class="sub mono">${esc(conv.phone)}</div>
       </div>
       <div class="spacer" style="flex:1"></div>
       <label class="row micro" style="gap:8px" title="Auto-reply for this conversation only">
-        <span class="switch"><input type="checkbox" id="conv-auto" ${conv.auto_reply ? 'checked' : ''}><span></span></span> Auto-reply
+        <span class="switch"><input type="checkbox" id="conv-auto" ${conv.auto_reply ? 'checked' : ''}><span></span></span><span class="micro-text">Auto-reply</span>
       </label>
       <button class="btn btn-sm" id="ai-now" title="Generate an AI answer to the last message now">Ask AI</button>
       <button class="btn btn-sm btn-ghost" id="mark-done" title="Clear the needs-human flag">${conv.needs_human ? 'Resolve' : '✓'}</button>
@@ -292,7 +321,7 @@ function renderChat(conv) {
     <div class="composer">
       <div class="line">
         <select id="tpl-pick" style="max-width:190px"><option value="">Freeform text…</option>${state.templates.map((t) => `<option value="${t.sid}">${esc(t.friendly_name || t.sid)}</option>`).join('')}</select>
-        <textarea id="composer-text" rows="1" placeholder="Type a message…  (Enter to send, Shift+Enter for a new line)"></textarea>
+        <textarea id="composer-text" rows="1" placeholder="${isMobile() ? 'Type a message…' : 'Type a message…  (Enter to send, Shift+Enter for a new line)'}"></textarea>
         <button class="btn btn-primary" id="send-msg">Send</button>
       </div>
       <div id="tpl-vars"></div>
@@ -300,6 +329,8 @@ function renderChat(conv) {
 
   const scroll = $('#chat-scroll');
   scroll.scrollTop = scroll.scrollHeight;
+
+  $('#chat-back').onclick = async () => { await refreshConversations(); renderConvList(); setInboxScreen('list'); };
 
   $('#conv-auto').onchange = async (e) => {
     await api(`/conversations/${conv.id}`, { method: 'PATCH', body: { auto_reply: e.target.checked } });
@@ -455,12 +486,12 @@ views.send = async (host) => {
       const r = await api('/send', { method: 'POST', body: payload });
       toast(`${r.sent} sent · ${r.failed} failed`, r.failed ? 'bad' : 'ok');
       $('#send-results', host).innerHTML = `
-        <table><thead><tr><th>Number</th><th>Result</th><th>Detail</th></tr></thead><tbody>
+        <div class="table-wrap"><table><thead><tr><th>Number</th><th>Result</th><th>Detail</th></tr></thead><tbody>
         ${r.results.map((x) => `<tr>
           <td class="mono">${esc(x.number)}</td>
           <td class="${x.ok ? 'result-ok' : 'result-bad'}">${x.ok ? 'Sent' : 'Failed'}</td>
           <td class="hint">${esc(x.error || x.sid || '')}</td></tr>`).join('')}
-        </tbody></table>`;
+        </tbody></table></div>`;
       loadBroadcasts();
       await refreshConversations();
     } catch (err) { toast(err.message, 'bad'); }
@@ -470,14 +501,14 @@ views.send = async (host) => {
   async function loadBroadcasts() {
     const rows = await api('/broadcasts');
     $('#broadcast-table', host).innerHTML = rows.length
-      ? `<table><thead><tr><th>When</th><th>Type</th><th>Content</th><th>Recipients</th><th>Sent</th><th>Failed</th></tr></thead><tbody>
+      ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>Type</th><th>Content</th><th>Recipients</th><th>Sent</th><th>Failed</th></tr></thead><tbody>
          ${rows.map((b) => `<tr>
            <td class="hint">${timeFull(b.created_at)}</td>
            <td><span class="pill">${esc(b.mode)}</span></td>
            <td>${esc((b.body || b.template_sid || '').slice(0, 70))}</td>
            <td>${b.total}</td><td class="result-ok">${b.sent}</td>
            <td class="${b.failed ? 'result-bad' : 'hint'}">${b.failed}</td></tr>`).join('')}
-         </tbody></table>`
+         </tbody></table></div>`
       : '<div class="empty">No broadcasts yet</div>';
   }
   loadBroadcasts();
@@ -507,7 +538,7 @@ views.templates = async (host) => {
       <div class="card">
         <div class="card-head"><h2>WhatsApp content templates</h2><div class="spacer"></div>
           <span class="hint">${state.templates.length} template(s) cached from your Twilio account</span></div>
-        <table>
+        <div class="table-wrap"><table>
           <thead><tr><th>Name</th><th>Language</th><th>Body</th><th>Variables</th><th>Approval</th><th>Content SID</th></tr></thead>
           <tbody>${state.templates.map((t) => `
             <tr>
@@ -518,7 +549,7 @@ views.templates = async (host) => {
               <td><span class="pill ${t.status === 'approved' ? 'ok' : t.status === 'rejected' ? 'bad' : 'warn'}">${esc(t.status || 'unknown')}</span></td>
               <td class="mono hint">${esc(t.sid)}</td>
             </tr>`).join('')}</tbody>
-        </table>
+        </table></div>
       </div>` : `
       <div class="card"><div class="card-body empty">
         <div>No templates cached yet.</div>
@@ -593,12 +624,12 @@ views.settings = async (host) => {
             <span class="pill ${s.twilio.configured ? 'ok' : 'bad'}">${s.twilio.configured ? 'configured' : 'not configured'}</span></div>
           <div class="card-body stack">
             <div class="hint">Credentials are read from <code class="mono">.env</code> and never stored in the database.</div>
-            <table>
+            <div class="table-wrap"><table>
               <tr><td>Account SID</td><td class="mono">${esc(s.twilio.accountSid || '—')}</td></tr>
               <tr><td>WhatsApp sender</td><td class="mono">${esc(s.twilio.from || '—')}</td></tr>
               <tr><td>Messaging service</td><td class="mono">${esc(s.twilio.messagingServiceSid || '—')}</td></tr>
               <tr><td>Dry run</td><td>${s.dryRun ? '<span class="pill warn">on — nothing is really sent</span>' : 'off'}</td></tr>
-            </table>
+            </table></div>
             <label class="field">Inbound webhook (Twilio → this app)
               <div class="copyrow"><code>${esc(s.webhookUrl)}</code><button class="btn btn-sm" data-copy="${esc(s.webhookUrl)}">Copy</button></div>
             </label>
@@ -613,12 +644,12 @@ views.settings = async (host) => {
           <div class="card-head"><h2>Azure OpenAI</h2><div class="spacer"></div>
             <span class="pill ${s.azure.configured ? 'ok' : 'bad'}">${s.azure.configured ? 'configured' : 'not configured'}</span></div>
           <div class="card-body stack">
-            <table>
+            <div class="table-wrap"><table>
               <tr><td>Endpoint</td><td class="mono">${esc(s.azure.endpoint || '—')}</td></tr>
               <tr><td>Deployment</td><td class="mono">${esc(s.azure.deployment || '—')}</td></tr>
               <tr><td>API version</td><td class="mono">${esc(s.azure.apiVersion)}</td></tr>
               <tr><td>Knowledge base</td><td>${s.context.chars} characters</td></tr>
-            </table>
+            </table></div>
             <div class="row"><button class="btn" id="test-azure">Test Azure connection</button><span id="azure-result" class="hint"></span></div>
           </div>
         </div>
@@ -662,12 +693,12 @@ views.logs = async (host) => {
   const render = (rows) => {
     host.innerHTML = `<div class="card">
       <div class="card-head"><h2>Activity</h2><div class="spacer"></div><span class="hint">latest ${rows.length} events</span></div>
-      ${rows.length ? `<table><thead><tr><th style="width:150px">Time</th><th style="width:80px">Scope</th><th>Event</th></tr></thead><tbody>
+      ${rows.length ? `<div class="table-wrap"><table><thead><tr><th style="width:150px">Time</th><th style="width:80px">Scope</th><th>Event</th></tr></thead><tbody>
         ${rows.map((l) => `<tr>
           <td class="hint mono">${timeFull(l.created_at)}</td>
           <td><span class="pill ${l.level === 'error' ? 'bad' : l.level === 'warn' ? 'warn' : ''}">${esc(l.scope || l.level)}</span></td>
           <td>${esc(l.message)}${l.detail ? `<div class="hint mono">${esc(l.detail)}</div>` : ''}</td>
-        </tr>`).join('')}</tbody></table>` : '<div class="empty">No activity yet</div>'}
+        </tr>`).join('')}</tbody></table></div>` : '<div class="empty">No activity yet</div>'}
     </div>`;
   };
   render(await api('/logs'));
@@ -682,7 +713,8 @@ function connectEvents() {
   source.addEventListener('message', async (e) => {
     const { conversationId } = JSON.parse(e.data);
     if (state.view !== 'inbox') { await refreshConversations(); return; }
-    if (conversationId === state.activeId) await openConversation(conversationId);
+    const viewingList = isMobile() && $('.inbox')?.classList.contains('show-list');
+    if (conversationId === state.activeId && !viewingList) await openConversation(conversationId);
     else { await refreshConversations(); renderConvList(); }
   });
   source.addEventListener('conversation', async () => {
@@ -712,7 +744,7 @@ $('#nav').addEventListener('click', (e) => {
   if (btn) go(btn.dataset.view);
 });
 
-$('#auto-toggle').onchange = async (e) => {
+const onAutoToggle = async (e) => {
   try {
     await api('/settings', { method: 'PUT', body: { auto_reply_enabled: String(e.target.checked) } });
     await refreshStatus();
@@ -720,12 +752,17 @@ $('#auto-toggle').onchange = async (e) => {
     if (state.view === 'settings') go('settings');
   } catch (err) { toast(err.message, 'bad'); }
 };
+$('#auto-toggle').onchange = onAutoToggle;
+$('#auto-toggle-m').onchange = onAutoToggle;
 
 (async function boot() {
   try {
-    await refreshStatus();
-    try { state.templates = await api('/templates'); } catch {}
-    await refreshConversations();
+    applyNavLabels();
+    await Promise.all([
+      refreshStatus(),
+      api('/templates').then((t) => { state.templates = t; }).catch(() => {}),
+      refreshConversations(),
+    ]);
   } catch (err) { toast(err.message, 'bad'); }
   connectEvents();
   go(location.hash.slice(1) in TITLES ? location.hash.slice(1) : 'overview');
@@ -735,4 +772,11 @@ $('#auto-toggle').onchange = async (e) => {
 window.addEventListener('hashchange', () => {
   const view = location.hash.slice(1);
   if (view in TITLES && view !== state.view) go(view);
+});
+
+mobileQuery.addEventListener('change', () => {
+  applyNavLabels();
+  if (state.view !== 'inbox') return;
+  if (!isMobile()) { setInboxScreen(null); if (state.activeId) openConversation(state.activeId); }
+  else setInboxScreen(state.activeId && $('#chat-scroll') ? 'chat' : 'list');
 });
