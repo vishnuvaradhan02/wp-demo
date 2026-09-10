@@ -96,6 +96,10 @@ CREATE TABLE IF NOT EXISTS logs (
       for (const r of db.prepare('SELECT key, value FROM settings').all()) out[r.key] = r.value;
       return out;
     },
+    async getSetting(key) {
+      const r = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+      return r ? r.value : undefined;
+    },
     async setSetting(key, value) {
       run('INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
         key, String(value));

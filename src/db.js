@@ -10,12 +10,13 @@ export { store };
 
 /* ── settings ─────────────────────────────────────────────── */
 
-export const allSettings = () => store.allSettings();
-export const setSetting = (key, value) => store.setSetting(key, value);
-export async function getSetting(key) {
+/** Keys prefixed with an underscore are internal (e.g. the knowledge base) and hidden from the settings API. */
+export async function allSettings() {
   const all = await store.allSettings();
-  return all[key];
+  return Object.fromEntries(Object.entries(all).filter(([k]) => !k.startsWith('_')));
 }
+export const setSetting = (key, value) => store.setSetting(key, value);
+export const getSetting = (key) => store.getSetting(key);
 
 /* ── conversations ────────────────────────────────────────── */
 

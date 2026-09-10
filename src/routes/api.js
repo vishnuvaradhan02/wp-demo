@@ -24,7 +24,7 @@ router.get('/status', wrap(async (_req, res) => {
   res.json({
     twilio: twilioStatus(),
     azure: azureStatus(),
-    context: contextInfo(),
+    context: await contextInfo(),
     publicUrl: config.publicUrl,
     webhookUrl: `${base}/webhook/twilio`,
     statusCallbackUrl: `${base}/webhook/status`,
@@ -54,13 +54,13 @@ router.put('/settings', wrap(async (req, res) => {
 
 /* ── company context ──────────────────────────────────────── */
 
-router.get('/context', (_req, res) => res.json({ ...contextInfo(), content: readContext() }));
+router.get('/context', wrap(async (_req, res) => res.json({ ...(await contextInfo()), content: await readContext() })));
 
-router.put('/context', (req, res) => {
+router.put('/context', wrap(async (req, res) => {
   if (typeof req.body?.content !== 'string') return res.status(400).json({ error: 'content required' });
-  writeContext(req.body.content);
-  res.json(contextInfo());
-});
+  await writeContext(req.body.content);
+  res.json(await contextInfo());
+}));
 
 /* ── templates ────────────────────────────────────────────── */
 

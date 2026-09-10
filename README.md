@@ -147,10 +147,10 @@ Status callback    POST  https://<your-domain>/webhook/status
   `gpt-4o-mini` reply.
 - **Live updates degrade gracefully.** The SSE stream is cut short by function
   timeouts, so the dashboard also polls every 20 seconds.
-- **Knowledge edits are not durable on Vercel.** `context/company.md` ships with the
-  deploy and the filesystem is read-only, so edits from the Knowledge tab are written
-  to `/tmp` and last only until the next cold start. Commit changes to the file for
-  permanent updates.
+- **Knowledge edits are stored in the database.** `context/company.md` is only the
+  default that ships with the deploy; anything saved from the Knowledge tab lives in
+  Postgres, survives redeploys and cold starts, and takes effect on the next reply.
+  Locally the repo file is kept in sync as well.
 
 ## Local development
 

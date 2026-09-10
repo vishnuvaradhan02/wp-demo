@@ -1,43 +1,45 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import config from '../config.js';
-import { allSettings, log } from '../db.js';
+import { allSettings, getSetting, setSetting, log } from '../db.js';
 
-/* ── company context file ─────────────────────────────────── */
+/* ── company knowledge base ───────────────────────────────── */
+/*
+ * The bundled context/company.md is only the default. An edit saved from the
+ * dashboard is stored in the database, so it survives redeploys and cold starts
+ * and every serverless instance reads the same text.
+ */
+const KEY_TEXT = '_company_context';
+const KEY_AT = '_company_context_updated_at';
 
-/** An edit saved from the dashboard wins over the file bundled with the deploy. */
-function activeContextPath() {
-  try {
-    if (fs.existsSync(config.contextOverrideFile)) return config.contextOverrideFile;
-  } catch {}
-  return config.contextFile;
+function readBundledContext() {
+  try { return fs.readFileSync(config.contextFile, 'utf8'); } catch { return ''; }
 }
 
-export function readContext() {
-  try {
-    return fs.readFileSync(activeContextPath(), 'utf8');
-  } catch {
-    return '';
-  }
+export async function readContext() {
+  const stored = await getSetting(KEY_TEXT);
+  return typeof stored === 'string' ? stored : readBundledContext();
 }
 
-export function writeContext(text) {
-  // The repo copy is writable locally; on a read-only deploy we fall back to /tmp.
-  try {
-    fs.writeFileSync(config.contextFile, text, 'utf8');
-  } catch {
-    fs.mkdirSync(path.dirname(config.contextOverrideFile), { recursive: true });
-    fs.writeFileSync(config.contextOverrideFile, text, 'utf8');
-  }
+export async function writeContext(text) {
+  await setSetting(KEY_TEXT, text);
+  await setSetting(KEY_AT, new Date().toISOString());
+  // Keep the repo copy in step when it is writable (local dev); ignore read-only deploys.
+  try { fs.writeFileSync(config.contextFile, text, 'utf8'); } catch {}
   log('info', 'context', `Company context updated (${text.length} chars)`);
 }
 
-export function contextInfo() {
-  const file = activeContextPath();
-  const text = readContext();
-  let mtime = null;
-  try { mtime = fs.statSync(file).mtime.toISOString(); } catch {}
-  return { path: file, chars: text.length, updatedAt: mtime };
+export async function contextInfo() {
+  const stored = await getSetting(KEY_TEXT);
+  const fromDb = typeof stored === 'string';
+  const text = fromDb ? stored : readBundledContext();
+  let updatedAt = fromDb ? await getSetting(KEY_AT) : null;
+  if (!updatedAt) { try { updatedAt = fs.statSync(config.contextFile).mtime.toISOString(); } catch {} }
+  return {
+    path: fromDb ? 'database' : config.contextFile,
+    source: fromDb ? 'database' : 'bundled file',
+    chars: text.length,
+    updatedAt: updatedAt || null,
+  };
 }
 
 /* ── Azure OpenAI ─────────────────────────────────────────── */
@@ -84,8 +86,7 @@ export async function chatCompletion(messages, { temperature, maxTokens, json = 
 
 /* ── reply generation ─────────────────────────────────────── */
 
-function systemPrompt(agent, contact) {
-  const knowledge = readContext();
+function systemPrompt(agent, contact, knowledge) {
   return `You are ${agent}, a WhatsApp support agent answering customers on behalf of the company described below.
 
 Your job: answer the customer's query with concrete DETAILS and a clear RESOLUTION — actual steps, prices, policies, timelines — taken strictly from the company knowledge base.
@@ -132,7 +133,8 @@ function parseReply(raw) {
 export async function generateReply({ history, contact }) {
   const settings = await allSettings();
   const turns = Number(settings.history_turns) || 10;
-  const messages = [{ role: 'system', content: systemPrompt(settings.agent_name, contact) }];
+  const knowledge = await readContext();
+  const messages = [{ role: 'system', content: systemPrompt(settings.agent_name, contact, knowledge) }];
   for (const m of history.slice(-turns)) {
     if (!m.body) continue;
     messages.push({ role: m.direction === 'in' ? 'user' : 'assistant', content: m.body });

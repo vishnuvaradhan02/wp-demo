@@ -102,6 +102,10 @@ CREATE TABLE IF NOT EXISTS logs (
       for (const r of await q('SELECT key, value FROM settings')) out[r.key] = r.value;
       return out;
     },
+    async getSetting(key) {
+      const r = (await pool.query('SELECT value FROM settings WHERE key = $1', [key])).rows[0];
+      return r ? r.value : undefined;
+    },
     async setSetting(key, value) {
       await pool.query(
         'INSERT INTO settings(key, value) VALUES($1, $2) ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value',
